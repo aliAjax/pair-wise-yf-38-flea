@@ -26,6 +26,14 @@ python3 app.py --db ./data.db --port 8304
 
 - `dataset`：受控数据集；`application`：访问申请；`grant`：限时数据使用凭证。
 
+## 受控的批准—授权—生效流程
+
+1. **批准留痕**：申请进入 `under_review` 后，`approve` 必须提交三名互不相同的委员（`reviewers: [{reviewer_id, reviewer_org}]`）；委员机构与申请人机构相同、或自行声明 `declared_conflict` 的一律拒绝。批准时冻结申请数据快照 `approval_snapshot`、用途版本 `approved_purpose_version` 和申请版本 `approved_application_version`。
+2. **授权绑定版本**：`grant` 只能在申请 `approved` 后创建，且数据集必须与申请一致；签发时在授权数据中盖绑定章（申请版本、用途版本、申请人机构、批准到期日），之后不再随申请数据漂移。
+3. **生效前复核**：`activate` 时再次核对来源申请仍为 `approved`、申请版本与用途版本未被改动（批准后 `amend` 用途/到期日会抬高版本并阻断生效）、`recipient_org` 与批准快照中的申请人机构一致、授权到期日不晚于批准到期日。
+4. **终结即失效**：申请 `withdraw` / `reject` / `expire` 时，所有未使用（`issued`）的授权立即置为 `invalid` 并写入 `invalid_reason`（如 `application_withdrawn`）和明细；仍有 `active` 授权时返回 `GrantsInUseError`（409），提示管理员先 `revoke`，申请保持原状态不变。
+5. **可追溯**：级联失效同样写入审计时间线；页面和实体视图可看清授权的来源申请、当前状态与失效原因。
+
 ## 主要接口
 
 - `GET /health`：健康检查。

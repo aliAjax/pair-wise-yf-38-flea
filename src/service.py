@@ -1,8 +1,8 @@
 from uuid import uuid4
 
 from .audit import AuditTrail
-from .domain import ConflictError, NotFoundError
-from .rules import RuleEngine
+from .domain import ConflictError, GrantsInUseError, NotFoundError
+from .rules import CLOSING_ACTIONS, RuleEngine
 
 
 class DomainService:
@@ -26,11 +26,21 @@ class DomainService:
                 entity = self.repository.get_entity(existing)
                 if entity:
                     return entity
-        self.rules.validate_create(actor, kind, payload, self._lookup)
+        payload = self.rules.validate_create(actor, kind, payload, self._lookup)
         entity_id = str(payload.pop("id", "") or uuid4())
         if self.repository.get_entity(entity_id):
             raise ConflictError("entity already exists: " + entity_id)
         status = self.rules.initial_status(kind)
+
+        if kind == "grant":
+            # Bind the grant to the exact approved application version and
+            # frozen purpose snapshot it was issued against.
+            application = self._lookup("application", "id", payload.get("application_id"))
+            application = application[0] if application else None
+            if not application:
+                raise NotFoundError("application not found")
+            payload.update(self.rules.binding_for_grant(application))
+
         entity = self.repository.create_entity(entity_id, kind, status, payload, actor.user_id)
         self.audit.record(entity_id, actor, "create", None, status, {"kind": kind})
         if idempotency_key:
@@ -45,6 +55,10 @@ class DomainService:
         next_status, patch = self.rules.validate_transition(
             actor, entity, action, dict(data or {}), self._lookup
         )
+
+        if entity["kind"] == "application" and action in CLOSING_ACTIONS:
+            return self._close_application(actor, entity, action, next_status, patch, expected)
+
         merged = dict(entity["data"])
         merged.update(patch)
         updated = self.repository.update_entity(entity_id, expected, next_status, merged)
@@ -55,6 +69,53 @@ class DomainService:
             entity["status"],
             updated["status"],
             {"patch": patch},
+        )
+        return updated
+
+    def _close_application(self, actor, entity, action, next_status, patch, expected):
+        """Withdraw / reject / expire an application and cascade onto grants."""
+        linked = self.repository.find_entities("grant", "application_id", entity["id"])
+        active = [grant for grant in linked if grant["status"] == "active"]
+        if active:
+            raise GrantsInUseError(
+                "application has %d active grant(s); revoke them before %s"
+                % (len(active), action)
+            )
+
+        reason_code = CLOSING_ACTIONS[action]
+        merged = dict(entity["data"])
+        merged.update(patch)
+        updated = self.repository.update_entity(entity["id"], expected, next_status, merged)
+
+        # Unused grants (issued but never activated) lose their effect
+        # immediately with a visible reason.
+        invalidated = []
+        for grant in linked:
+            if grant["status"] != "issued":
+                continue
+            grant_data = dict(grant["data"])
+            grant_data["invalid_reason"] = reason_code
+            grant_data["invalid_detail"] = patch.get("reason", action)
+            grant_data["invalidated_by"] = actor.user_id
+            grant_data["invalidated_at"] = updated["updated_at"]
+            self.repository.update_entity(grant["id"], grant["version"], "invalid", grant_data)
+            self.audit.record(
+                grant["id"],
+                actor,
+                "invalidate",
+                grant["status"],
+                "invalid",
+                {"reason": reason_code, "source_application": entity["id"]},
+            )
+            invalidated.append(grant["id"])
+
+        self.audit.record(
+            entity["id"],
+            actor,
+            action,
+            entity["status"],
+            updated["status"],
+            {"patch": patch, "invalidated_grants": invalidated},
         )
         return updated
 

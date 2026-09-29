@@ -5,30 +5,288 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>基因组数据访问治理</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #1f2937; }
-    main { max-width: 820px; margin: auto; }
-    pre { background: #f3f4f6; padding: 1rem; border-radius: 8px; overflow-x: auto; }
-    button { padding: .5rem .8rem; cursor: pointer; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 1.5rem; color: #1f2937; background: #f9fafb; }
+    main { max-width: 1080px; margin: auto; }
+    h1 { margin-bottom: .25rem; }
+    .sub { color: #6b7280; margin-top: 0; }
+    .toolbar { margin: 1rem 0; display: flex; gap: .5rem; flex-wrap: wrap; }
+    button { padding: .4rem .75rem; border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 6px; cursor: pointer; font-size: .9rem; }
+    button.secondary { background: #fff; color: #2563eb; }
+    button.danger { background: #dc2626; border-color: #dc2626; }
+    button.ghost { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    section { margin-top: 1.5rem; }
+    h2 { font-size: 1.1rem; border-bottom: 2px solid #e5e7eb; padding-bottom: .3rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; font-size: .88rem; }
+    th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+    th { background: #f3f4f6; white-space: nowrap; }
+    code { background: #f3f4f6; padding: .05rem .3rem; border-radius: 4px; }
+    .badge { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .78rem; font-weight: 600; }
+    .st-approved, .st-active { background: #dcfce7; color: #166534; }
+    .st-issued { background: #dbeafe; color: #1e40af; }
+    .st-under_review, .st-submitted, .st-draft { background: #fef9c3; color: #854d0e; }
+    .st-invalid, .st-revoked, .st-rejected, .st-withdrawn, .st-expired { background: #fee2e2; color: #991b1b; }
+    .muted { color: #6b7280; font-size: .8rem; }
+    .reason { color: #991b1b; font-weight: 600; }
+    .ok { color: #166534; }
+    #toast { position: fixed; right: 1rem; bottom: 1rem; max-width: 420px; }
+    .toast-item { margin-top: .5rem; padding: .6rem .8rem; border-radius: 6px; background: #111827; color: #fff; font-size: .85rem; white-space: pre-wrap; }
+    .toast-item.err { background: #991b1b; }
   </style>
 </head>
 <body>
 <main>
   <h1>基因组数据访问治理</h1>
-  <p>这是最小演示页面。使用浏览器或 curl 调用 JSON API。</p>
-  <p><button onclick="checkHealth()">检查服务状态</button></p>
-  <pre id="result">等待操作</pre>
-  <h2>常用接口</h2>
-  <pre>GET  /health
-GET  /api/&lt;kind&gt;
-POST /api/&lt;kind&gt;
-GET  /api/entities/&lt;id&gt;
-POST /api/entities/&lt;id&gt;/actions</pre>
+  <p class="sub">批准留痕（三名无利益关联委员 + 申请/用途版本快照）→ 授权只绑定已批准版本 → 生效前复核机构、用途与有效期；申请撤回/驳回/过期后，未使用授权立即失效，使用中需管理员先撤销。</p>
+
+  <div class="toolbar">
+    <button onclick="loadAll()">刷新</button>
+    <button class="secondary" onclick="seedDemo()">载入演示流程</button>
+  </div>
+
+  <section>
+    <h2>授权（grant）</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>授权ID</th><th>来源申请</th><th>接收人 / 机构</th><th>状态</th>
+          <th>绑定版本</th><th>授权有效期</th><th>失效原因</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="grants-body"><tr><td colspan="8" class="muted">点击“刷新”或“载入演示流程”</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>访问申请（application）</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>申请ID</th><th>申请人 / 机构</th><th>用途（版本）</th><th>状态</th>
+          <th>批准委员</th><th>批准有效期</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="apps-body"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>受控数据集（dataset）</h2>
+    <table>
+      <thead><tr><th>ID</th><th>名称</th><th>访问策略</th><th>状态</th></tr></thead>
+      <tbody id="datasets-body"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>流程规则</h2>
+    <ul class="muted">
+      <li><b>批准：</b>需要三名互不相同、且与申请人机构无利益关联（也不得自行声明利益冲突）的委员；批准时冻结申请数据快照与 <code>approved_purpose_version</code>。</li>
+      <li><b>授权：</b>只能在申请 <code>approved</code> 后签发，并记录绑定的申请版本、用途版本、机构与批准到期日。</li>
+      <li><b>生效：</b>重新核对来源申请仍为已批准、版本/用途未被改动、接收机构一致、授权到期日不晚于批准到期日。</li>
+      <li><b>终结：</b>申请撤回、驳回或过期时，未生效（issued）授权立即置为 <code>invalid</code> 并记录原因；仍有 active 授权时会阻断并提示管理员先撤销。</li>
+    </ul>
+  </section>
 </main>
+<div id="toast"></div>
+
 <script>
-async function checkHealth() {
-  const response = await fetch('/health');
-  document.getElementById('result').textContent = JSON.stringify(await response.json(), null, 2);
+const HEADERS = {"Content-Type": "application/json", "X-User-Id": "web-admin", "X-Role": "admin"};
+let grants = [], apps = [], datasets = [];
+
+function short(id) { return id ? id.slice(0, 8) : "—"; }
+function esc(v) {
+  return String(v == null ? "" : v).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 }
+function toast(msg, isErr) {
+  const box = document.getElementById("toast");
+  const item = document.createElement("div");
+  item.className = "toast-item" + (isErr ? " err" : "");
+  item.textContent = msg;
+  box.appendChild(item);
+  setTimeout(() => item.remove(), 6000);
+}
+
+async function api(method, path, body) {
+  const res = await fetch(path, {method, headers: HEADERS, body: body ? JSON.stringify(body) : undefined});
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((payload.type || "Error") + ": " + (payload.error || res.status));
+  return payload;
+}
+
+async function callAction(id, action, data) {
+  try {
+    await api("POST", `/api/entities/${id}/actions`, {action, data: data || {}});
+    toast(`动作 ${action} 已执行`);
+    await loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+function badge(status) {
+  const safe = esc(status || "");
+  return `<span class="badge st-${safe}">${safe}</span>`;
+}
+
+function appMap(id) { return apps.find(a => a.id === id); }
+
+function reviewersText(app) {
+  const list = app.data.reviewers;
+  if (!list) return `<span class="muted">未批准</span>`;
+  return list.map(r => `${esc(r.reviewer_id)}@${esc(r.reviewer_org)}`).join("<br>");
+}
+
+function renderGrants() {
+  const body = document.getElementById("grants-body");
+  if (!grants.length) { body.innerHTML = `<tr><td colspan="8" class="muted">暂无授权</td></tr>`; return; }
+  body.innerHTML = grants.map(g => {
+    const app = appMap(g.data.application_id);
+    const sourceBadge = app ? badge(app.status) : `<span class="muted">来源缺失</span>`;
+    const bind = g.data.bound_application_version == null
+      ? `<span class="muted">未绑定</span>`
+      : `v${esc(g.data.bound_application_version)} / ${esc((g.data.bound_purpose_version || "").slice(0, 14))}`;
+    const match = app && g.data.bound_application_version != null
+      ? (app.version === g.data.bound_application_version
+          ? `<br><span class="ok">与来源一致</span>`
+          : `<br><span class="reason">来源已变更（当前v${app.version}）</span>`)
+      : "";
+    const reason = g.data.invalid_reason
+      ? `<span class="reason">${esc(g.data.invalid_reason)}</span>` + (g.data.invalid_detail ? `<br><span class="muted">${esc(g.data.invalid_detail)}</span>` : "")
+      : `<span class="muted">—</span>`;
+    let actions = "";
+    if (g.status === "issued") {
+      const appExpiry = app ? app.data.expires_at : "2099-01-01";
+      actions = `<button onclick="activateGrant('${g.id}', '${esc(appExpiry)}')">生效</button>
+                 <button class="ghost" onclick="callAction('${g.id}','invalidate',{reason:prompt('失效原因')||'manual'})">作废</button>`;
+    } else if (g.status === "active") {
+      actions = `<button class="danger" onclick="callAction('${g.id}','revoke',{reason:prompt('撤销原因')||'admin revoke'})">管理员撤销</button>`;
+    } else {
+      actions = `<span class="muted">终态</span>`;
+    }
+    return `<tr>
+      <td><code>${short(g.id)}</code></td>
+      <td><code>${short(g.data.application_id)}</code><br>${sourceBadge}${match}</td>
+      <td>${esc(g.data.recipient)}<br><span class="muted">${esc(g.data.recipient_org)}</span></td>
+      <td>${badge(g.status)}</td>
+      <td>${bind}</td>
+      <td class="muted">${esc(g.data.starts_at || "未开始")} → ${esc(g.data.expires_at || g.data.bound_approval_expires_at || "—")}</td>
+      <td>${reason}</td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderApps() {
+  const body = document.getElementById("apps-body");
+  if (!apps.length) { body.innerHTML = `<tr><td colspan="7" class="muted">暂无申请</td></tr>`; return; }
+  body.innerHTML = apps.map(a => {
+    const purpose = `${esc(a.data.purpose)}<br><span class="muted">${esc(a.data.approved_purpose_version ? a.data.approved_purpose_version.slice(0, 18) : "草稿用途")}</span>`;
+    let actions = "";
+    if (a.status === "draft") actions = `<button onclick="callAction('${a.id}','submit',{})">提交</button>`;
+    else if (a.status === "submitted") actions = `<button onclick="callAction('${a.id}','review',{committee_id:'committee-a'})">送审</button>`;
+    else if (a.status === "under_review") actions = `<button onclick="approve('${a.id}')">批准（三名委员）</button>
+        <button class="danger" onclick="callAction('${a.id}','reject',{reason:prompt('驳回原因')||'rejected'})">驳回</button>`;
+    else if (a.status === "approved") actions = `<button class="secondary" onclick="amend('${a.id}')">变更用途/到期日</button>
+        <button class="ghost" onclick="callAction('${a.id}','withdraw',{reason:'申请人撤回'})">撤回</button>
+        <button class="ghost" onclick="callAction('${a.id}','expire',{reason:'批准过期'})">标记过期</button>`;
+    else actions = `<span class="muted">终态</span>`;
+    return `<tr>
+      <td><code>${short(a.id)}</code></td>
+      <td>${esc(a.data.applicant_id)}<br><span class="muted">${esc(a.data.applicant_org)}</span></td>
+      <td>${purpose}</td>
+      <td>${badge(a.status)}<br><span class="muted">v${a.version}</span></td>
+      <td>${reviewersText(a)}</td>
+      <td class="muted">${esc(a.data.expires_at || "—")}</td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderDatasets() {
+  const body = document.getElementById("datasets-body");
+  body.innerHTML = datasets.length
+    ? datasets.map(d => `<tr><td><code>${short(d.id)}</code></td><td>${esc(d.data.name)}</td><td>${esc(d.data.access_policy)}</td><td>${badge(d.status)}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="muted">暂无数据集</td></tr>`;
+}
+
+async function loadAll() {
+  try {
+    const [g, a, d] = await Promise.all([
+      api("GET", "/api/grants"), api("GET", "/api/applications"), api("GET", "/api/datasets")
+    ]);
+    grants = g.items; apps = a.items; datasets = d.items;
+    renderGrants(); renderApps(); renderDatasets();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function approve(id) {
+  const expiry = prompt("批准到期日（YYYY-MM-DD）", "2099-01-01");
+  if (!expiry) return;
+  await callAction(id, "approve", {
+    terms: "noncommercial",
+    expires_at: expiry,
+    reviewers: [
+      {reviewer_id: "r1", reviewer_org: "university-a"},
+      {reviewer_id: "r2", reviewer_org: "university-b"},
+      {reviewer_id: "r3", reviewer_org: "hospital-c"}
+    ]
+  });
+}
+
+async function amend(id) {
+  const purpose = prompt("新用途（留空则不改）", "");
+  if (purpose === null) return;
+  const data = {reason: "web amend"};
+  if (purpose) data.purpose = purpose;
+  await callAction(id, "amend", data);
+}
+
+async function activateGrant(id, expiry) {
+  const data = {starts_at: new Date().toISOString().slice(0, 10)};
+  data.expires_at = prompt("授权到期日（不得晚于批准到期日 " + expiry + "）", expiry < "2098-12-31" ? expiry : "2098-12-31");
+  if (!data.expires_at) return;
+  await callAction(id, "activate", data);
+}
+
+async function seedDemo() {
+  try {
+    const reviewers = [
+      {reviewer_id: "r1", reviewer_org: "university-a"},
+      {reviewer_id: "r2", reviewer_org: "university-b"},
+      {reviewer_id: "r3", reviewer_org: "hospital-c"}
+    ];
+    // 场景一：完整健康流程（批准 -> 签发 -> 生效）
+    let d = await api("POST", "/api/datasets", {name: "演示队列-A", access_policy: "controlled"});
+    let a = await api("POST", "/api/applications", {dataset_id: d.id, applicant_id: "APP-A", applicant_org: "genomics-lab-x", purpose: "variant analysis"});
+    await api("POST", `/api/entities/${a.id}/actions`, {action: "submit", data: {}});
+    await api("POST", `/api/entities/${a.id}/actions`, {action: "review", data: {committee_id: "committee-a"}});
+    await api("POST", `/api/entities/${a.id}/actions`, {action: "approve", data: {reviewers, terms: "noncommercial", expires_at: "2099-01-01"}});
+    let g = await api("POST", "/api/grants", {application_id: a.id, dataset_id: d.id, recipient: "researcher-a", recipient_org: "genomics-lab-x"});
+    await api("POST", `/api/entities/${g.id}/actions`, {action: "activate", data: {starts_at: "2026-09-29", expires_at: "2098-12-31"}});
+
+    // 场景二：申请撤回，未使用授权立即失效
+    let d2 = await api("POST", "/api/datasets", {name: "演示队列-B", access_policy: "controlled"});
+    let a2 = await api("POST", "/api/applications", {dataset_id: d2.id, applicant_id: "APP-B", applicant_org: "biobank-y", purpose: "cohort statistics"});
+    await api("POST", `/api/entities/${a2.id}/actions`, {action: "submit", data: {}});
+    await api("POST", `/api/entities/${a2.id}/actions`, {action: "review", data: {committee_id: "committee-a"}});
+    await api("POST", `/api/entities/${a2.id}/actions`, {action: "approve", data: {reviewers, terms: "noncommercial", expires_at: "2099-01-01"}});
+    let g2 = await api("POST", "/api/grants", {application_id: a2.id, dataset_id: d2.id, recipient: "researcher-b", recipient_org: "biobank-y"});
+    await api("POST", `/api/entities/${a2.id}/actions`, {action: "withdraw", data: {reason: "演示：申请人撤回"}});
+
+    // 场景三：批准后用途被改，授权生效时应被阻断（保持 issued，页面显示来源已变更）
+    let d3 = await api("POST", "/api/datasets", {name: "演示队列-C", access_policy: "controlled"});
+    let a3 = await api("POST", "/api/applications", {dataset_id: d3.id, applicant_id: "APP-C", applicant_org: "hospital-z", purpose: "rare variant review"});
+    await api("POST", `/api/entities/${a3.id}/actions`, {action: "submit", data: {}});
+    await api("POST", `/api/entities/${a3.id}/actions`, {action: "review", data: {committee_id: "committee-a"}});
+    await api("POST", `/api/entities/${a3.id}/actions`, {action: "approve", data: {reviewers, terms: "noncommercial", expires_at: "2099-01-01"}});
+    await api("POST", "/api/grants", {application_id: a3.id, dataset_id: d3.id, recipient: "researcher-c", recipient_org: "hospital-z"});
+    await api("POST", `/api/entities/${a3.id}/actions`, {action: "amend", data: {reason: "演示：用途变更", purpose: "marketing analytics (not reviewed)"}});
+
+    toast("演示数据已载入：1 个生效中、1 个随撤回失效、1 个用途变更待阻断");
+    await loadAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+loadAll();
 </script>
 </body>
 </html>

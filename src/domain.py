@@ -23,6 +23,10 @@ class ConflictError(DomainError):
     """A version or uniqueness constraint was violated."""
 
 
+class GrantsInUseError(ConflictError):
+    """Application cannot be closed while active grants still need revocation."""
+
+
 class InvalidTransition(DomainError):
     """The requested state transition is not valid."""
 
