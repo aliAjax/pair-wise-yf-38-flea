@@ -5,30 +5,313 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>基因组数据访问治理</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #1f2937; }
-    main { max-width: 820px; margin: auto; }
-    pre { background: #f3f4f6; padding: 1rem; border-radius: 8px; overflow-x: auto; }
-    button { padding: .5rem .8rem; cursor: pointer; }
+    :root {
+      --gray:#6b7280; --red:#b91c1c; --red-bg:#fef2f2;
+      --green:#15803d; --green-bg:#f0fdf4;
+      --amber:#b45309; --amber-bg:#fffbeb;
+      --blue:#1d4ed8; --blue-bg:#eff6ff; --line:#e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+           margin: 0; background:#f9fafb; color:#1f2937; }
+    main { max-width: 1080px; margin: auto; padding: 1.5rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 .75rem; }
+    .sub { color: var(--gray); font-size: .85rem; margin-bottom: 1rem; }
+    .toolbar { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:1rem; }
+    button { padding:.45rem .8rem; border:1px solid var(--line); background:#fff; border-radius:6px;
+             cursor:pointer; font-size:.85rem; }
+    button:hover { background:#f3f4f6; }
+    select, input, textarea { font: inherit; font-size:.85rem; padding:.4rem .5rem;
+             border:1px solid var(--line); border-radius:6px; background:#fff; }
+    textarea { width:100%; min-height:70px; font-family: ui-monospace, Menlo, monospace; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:1rem; }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+    .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:.9rem 1rem;
+            margin-bottom:.75rem; }
+    .card.grant { border-left-width:4px; }
+    .row { display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
+    .mono { font-family: ui-monospace, Menlo, monospace; font-size:.78rem; color:var(--gray);
+            word-break:break-all; }
+    .badge { display:inline-block; padding:.15rem .6rem; border-radius:999px; font-size:.75rem;
+             font-weight:600; white-space:nowrap; }
+    .b-issued    { color:var(--blue); background:var(--blue-bg); }
+    .b-active    { color:var(--green); background:var(--green-bg); }
+    .b-revoked   { color:var(--amber); background:var(--amber-bg); }
+    .b-expired   { color:var(--gray); background:#f3f4f6; }
+    .b-voided    { color:var(--red); background:var(--red-bg); }
+    .b-approved  { color:var(--green); background:var(--green-bg); }
+    .b-draft,.b-submitted,.b-under_review { color:var(--blue); background:var(--blue-bg); }
+    .b-rejected,.b-withdrawn { color:var(--red); background:var(--red-bg); }
+    .b-registered,.b-restricted,.b-published { color:var(--gray); background:#f3f4f6; }
+    .reason { margin-top:.6rem; padding:.5rem .7rem; border-radius:6px; background:var(--red-bg);
+              color:var(--red); font-size:.85rem; border:1px solid #fecaca; }
+    .src { margin-top:.6rem; padding:.55rem .7rem; background:#f9fafb; border:1px dashed var(--line);
+           border-radius:6px; font-size:.82rem; }
+    .src b { color:#374151; }
+    details summary { cursor:pointer; color:var(--blue); font-size:.8rem; margin-top:.4rem; }
+    .kv { display:grid; grid-template-columns: 7.5em 1fr; gap:.15rem .5rem; margin-top:.4rem;
+          font-size:.82rem; }
+    .kv .k { color:var(--gray); }
+    .reviewers { display:inline-flex; gap:.3rem; flex-wrap:wrap; margin-top:.2rem; }
+    .reviewers span { font-size:.72rem; background:#f3f4f6; border-radius:4px; padding:.05rem .4rem; }
+    .panel { background:#fff; border:1px solid var(--line); border-radius:10px; padding:1rem; }
+    .result { margin-top:.6rem; background:#0f172a; color:#e2e8f0; border-radius:8px; padding:.7rem;
+              font-family: ui-monospace, Menlo, monospace; font-size:.76rem; white-space:pre-wrap;
+              max-height:240px; overflow:auto; }
+    .audit-item { font-size:.8rem; padding:.4rem 0; border-bottom:1px solid #f3f4f6; display:flex;
+                  gap:.6rem; align-items:baseline; flex-wrap:wrap; }
+    .audit-item .cascade { color:var(--red); font-weight:600; }
+    .muted { color:var(--gray); font-size:.78rem; }
+    #health.ok { color:var(--green); }
+    #health.bad { color:var(--red); }
   </style>
 </head>
 <body>
 <main>
   <h1>基因组数据访问治理</h1>
-  <p>这是最小演示页面。使用浏览器或 curl 调用 JSON API。</p>
-  <p><button onclick="checkHealth()">检查服务状态</button></p>
-  <pre id="result">等待操作</pre>
-  <h2>常用接口</h2>
-  <pre>GET  /health
-GET  /api/&lt;kind&gt;
-POST /api/&lt;kind&gt;
-GET  /api/entities/&lt;id&gt;
-POST /api/entities/&lt;id&gt;/actions</pre>
+  <div class="sub">受控流程：批准（三名无利益关联委员 + 冻结申请/用途版本） → 授权（只能绑定已批准版本） → 生效（再次核对机构、用途与有效期）。服务状态：<span id="health">未检查</span></div>
+
+  <div class="toolbar">
+    <button onclick="loadAll()">刷新全部</button>
+    <label class="muted">授权状态筛选
+      <select id="grantFilter" onchange="render()">
+        <option value="">全部</option>
+        <option>issued</option><option>active</option><option>revoked</option>
+        <option>expired</option><option>voided</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="grid">
+    <section>
+      <h2>授权（grant）</h2>
+      <div id="grants"></div>
+    </section>
+    <section>
+      <h2>访问申请（application）</h2>
+      <div id="applications"></div>
+      <h2>数据集（dataset）</h2>
+      <div id="datasets"></div>
+    </section>
+  </div>
+
+  <h2>操作面板</h2>
+  <div class="panel">
+    <div class="toolbar">
+      <input id="entityId" placeholder="对象 ID" style="width:300px">
+      <input id="action" placeholder="动作，如 approve / amend / reconsider / activate / revoke / expire / withdraw" style="width:320px">
+      <button onclick="runAction()">提交动作</button>
+    </div>
+    <textarea id="actionData" placeholder='动作数据 JSON，例如：
+{"reviewers":[{"committee_id":"r1"},{"committee_id":"r2"},{"committee_id":"r3"}],"terms":"noncommercial","expires_at":"2099-12-31"}'></textarea>
+    <div class="toolbar" style="margin-top:.6rem">
+      <input id="createKind" placeholder="对象类型：dataset / application / grant" style="width:220px">
+      <button onclick="runCreate()">创建对象</button>
+    </div>
+    <textarea id="createData" placeholder='创建数据 JSON，例如：
+{"dataset_id":"...","applicant_id":"APP-1","institution":"Genome Institute","purpose":"variant analysis"}'></textarea>
+    <div id="actionResult" class="result">操作结果将显示在这里</div>
+  </div>
+
+  <h2>审计时间线（系统级联失效以 <span class="cascade">红色</span> 标注）</h2>
+  <div id="audit" class="panel"></div>
 </main>
+
 <script>
-async function checkHealth() {
-  const response = await fetch('/health');
-  document.getElementById('result').textContent = JSON.stringify(await response.json(), null, 2);
+let state = { grants: [], applications: [], datasets: [], audit: [] };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const shortId = (id) => id ? id.slice(0, 8) : '';
+
+function badge(status) {
+  const labels = {
+    issued:'已签发·未生效', active:'使用中', revoked:'已撤销', expired:'已过期', voided:'已失效',
+    draft:'草稿', submitted:'已提交', under_review:'审查中', approved:'已批准',
+    rejected:'已驳回', withdrawn:'已撤回',
+    registered:'已登记', restricted:'已限制', published:'已发布',
+  };
+  return `<span class="badge b-${esc(status)}">${esc(labels[status] || status)}</span>`;
 }
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const body = await res.json();
+  if (!res.ok) throw new Error(`${res.status} ${body.type || ''}: ${body.error || JSON.stringify(body)}`);
+  return body;
+}
+
+async function checkHealth() {
+  try {
+    const h = await api('/health');
+    $('health').textContent = h.status === 'ok' ? '正常' : '异常';
+    $('health').className = h.status === 'ok' ? 'ok' : 'bad';
+  } catch (e) {
+    $('health').textContent = '不可用';
+    $('health').className = 'bad';
+  }
+}
+
+async function loadAll() {
+  await checkHealth();
+  const [g, a, d, au] = await Promise.all([
+    api('/api/grants'), api('/api/applications'),
+    api('/api/datasets'), api('/api/audit'),
+  ]);
+  state = { grants: g.items, applications: a.items, datasets: d.items, audit: au.items };
+  render();
+}
+
+function kv(k, v) {
+  return `<div class="k">${esc(k)}</div><div>${v}</div>`;
+}
+
+function renderGrant(grant) {
+  const d = grant.data || {};
+  const app = state.applications.find((x) => x.id === d.application_id);
+  const bound = d.bound_approval || {};
+  const reason = d.invalid_reason
+    ? `<div class="reason"><b>失效原因：</b>${esc(d.invalid_reason)}</div>` : '';
+  const src = app
+    ? `<div class="src">
+         <b>来源申请：</b>${badge(app.status)}
+         <span class="mono">${esc(shortId(app.id))}</span>
+         <div class="kv">
+           ${kv('申请人 / 机构', `${esc(app.data.applicant_id)} / ${esc(app.data.institution)}`)}
+           ${kv('用途（当前）', `${esc(app.data.purpose)} <span class="muted">v${esc(app.data.purpose_version)}</span>`)}
+           ${kv('绑定批准版本', `v${esc(bound.application_version)}`)}
+           ${kv('绑定用途', `${esc(bound.purpose)} <span class="muted">v${esc(bound.purpose_version)}</span>`)}
+           ${kv('批准有效期至', esc(bound.expires_at))}
+         </div>
+         ${app.data.amendments && app.data.amendments.length
+           ? `<details><summary>申请修订记录（${app.data.amendments.length}）</summary>
+              <div class="kv">${app.data.amendments.map((m, i) =>
+                kv('第' + (i+1) + '次', esc(JSON.stringify(m.changes)))).join('')}</div></details>`
+           : ''}
+       </div>`
+    : `<div class="src"><b>来源申请：</b><span class="mono">${esc(shortId(d.application_id))}</span>（未找到）</div>`;
+  return `<div class="card grant">
+    <div class="row">
+      <span class="mono">${esc(shortId(grant.id))}</span>
+      ${badge(grant.status)}
+    </div>
+    <div class="kv">
+      ${kv('接收人', esc(d.recipient))}
+      ${kv('接收机构', esc(d.recipient_institution))}
+      ${kv('实体版本', `v${esc(grant.version)}`)}
+    </div>
+    ${src}
+    ${reason}
+  </div>`;
+}
+
+function renderApplication(app) {
+  const d = app.data || {};
+  const approved = d.approved;
+  const linkedGrants = state.grants.filter((g) => g.data.application_id === app.id);
+  return `<div class="card">
+    <div class="row">
+      <span class="mono">${esc(shortId(app.id))}</span>
+      ${badge(app.status)}
+    </div>
+    <div class="kv">
+      ${kv('申请人', esc(d.applicant_id))}
+      ${kv('机构', esc(d.institution))}
+      ${kv('用途', `${esc(d.purpose)} <span class="muted">v${esc(d.purpose_version)}</span>`)}
+      ${kv('批准有效期至', esc(d.expires_at || '—'))}
+    </div>
+    ${approved
+      ? `<details open><summary>批准快照 v${esc(approved.version)}（${esc(approved.approved_at)}）</summary>
+           <div class="kv">
+             ${kv('无利益关联委员', `<span class="reviewers">${approved.reviewers
+               .map((r) => `<span>${esc(r.committee_id)}${r.conflict_of_interest ? ' ⚠' : ' ✓'}</span>`).join('')}</span>`)}
+             ${kv('条款', esc(approved.terms))}
+             ${kv('快照用途', `${esc(approved.purpose)} v${esc(approved.purpose_version)}`)}
+             ${kv('快照机构', esc(approved.institution))}
+           </div>
+         </details>`
+      : '<div class="muted" style="margin-top:.4rem">尚未批准（无冻结快照）</div>'}
+    ${linkedGrants.length
+      ? `<div class="muted" style="margin-top:.4rem">关联授权：${linkedGrants
+          .map((g) => shortId(g.id) + ' ' + badge(g.status)).join('，')}</div>`
+      : ''}
+  </div>`;
+}
+
+function render() {
+  const filter = $('grantFilter').value;
+  const grants = state.grants.filter((g) => !filter || g.status === filter);
+  $('grants').innerHTML = grants.length
+    ? grants.map(renderGrant).join('')
+    : '<div class="muted">暂无授权</div>';
+  $('applications').innerHTML = state.applications.length
+    ? state.applications.map(renderApplication).join('')
+    : '<div class="muted">暂无申请</div>';
+  $('datasets').innerHTML = state.datasets.map((x) =>
+    `<div class="card"><div class="row"><span>${esc(x.data.name)}</span>${badge(x.status)}</div>
+     <div class="mono">${esc(shortId(x.id))} · ${esc(x.data.access_policy)}</div></div>`
+  ).join('') || '<div class="muted">暂无数据集</div>';
+  $('audit').innerHTML = state.audit.slice().reverse().slice(0, 100).map((item) => {
+    const cascade = item.detail && item.detail.cascade_from;
+    return `<div class="audit-item">
+      <span class="mono">${esc(item.created_at)}</span>
+      ${badge(item.to_status)}
+      <span>${esc(item.action)}</span>
+      <span class="mono">${esc(shortId(item.entity_id))}</span>
+      <span class="muted">${esc(item.actor_id)}（${esc(item.actor_role)}）</span>
+      ${cascade ? `<span class="cascade">级联失效：来源${esc(item.detail.application_action)} · ${esc(item.detail.reason)}</span>` : ''}
+    </div>`;
+  }).join('') || '<div class="muted">暂无审计记录</div>';
+}
+
+function parseJson(text) {
+  if (!text.trim()) return {};
+  return JSON.parse(text);
+}
+
+async function runAction() {
+  const id = $('entityId').value.trim();
+  const action = $('action').value.trim();
+  if (!id || !action) return showResult(new Error('需要填写对象 ID 和动作名'));
+  try {
+    const body = await api(`/api/entities/${encodeURIComponent(id)}/actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Role': 'admin', 'X-User-Id': 'web-admin' },
+      body: JSON.stringify({ action, data: parseJson($('actionData').value) }),
+    });
+    showResult(null, body);
+    await loadAll();
+  } catch (e) { showResult(e); }
+}
+
+async function runCreate() {
+  const kind = $('createKind').value.trim();
+  if (!kind) return showResult(new Error('需要填写对象类型'));
+  try {
+    const body = await api(`/api/${encodeURIComponent(kind)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Role': 'admin', 'X-User-Id': 'web-admin' },
+      body: JSON.stringify(parseJson($('createData').value)),
+    });
+    showResult(null, body);
+    await loadAll();
+  } catch (e) { showResult(e); }
+}
+
+function showResult(err, body) {
+  const el = $('actionResult');
+  if (err) {
+    el.style.color = '#fca5a5';
+    el.textContent = '✗ ' + err.message;
+  } else {
+    el.style.color = '#e2e8f0';
+    el.textContent = '✓ ' + JSON.stringify(body, null, 2);
+  }
+}
+
+loadAll();
+setInterval(checkHealth, 15000);
 </script>
 </body>
 </html>

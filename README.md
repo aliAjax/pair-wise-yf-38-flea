@@ -26,6 +26,18 @@ python3 app.py --db ./data.db --port 8304
 
 - `dataset`：受控数据集；`application`：访问申请；`grant`：限时数据使用凭证。
 
+## 受控流程：批准 → 授权 → 生效
+
+- **批准**：`approve` 必须提供三名互不相同且无利益关联的委员（`reviewers: [{committee_id, conflict_of_interest:false}]`，兼容旧字段 `approvals`）；利益关联委员或申请人本人不得参与。批准时在 `data.approved` 冻结申请快照（申请人、机构、数据集、用途 `purpose`、用途版本 `purpose_version`、条款、有效期、批准人与时间），快照版本等于申请实体版本。
+- **用途/有效期变更**：申请已批准后用 `amend` 修订（用途变更会令 `purpose_version` 递增并写入 `amendments`），冻结快照保持不变；需要让变更重新生效时用 `reconsider` 回到 `under_review`，重新 `approve` 后生成新的冻结快照版本（旧授权仍绑定旧版本，按新版本重新签发的授权才能生效）；`expire` 将申请登记为过期。
+- **授权签发**：`grant` 创建时只能绑定状态为 `approved` 的申请，数据集与申请人机构必须一致；可显式传 `application_version`（必须等于当前已批准版本，否则冲突拒绝）。授权数据中的 `bound_approval` 保存绑定快照，此后不再随申请当前数据漂移。`recipient_institution` 为必填。
+- **生效前复核**：`activate` 会重新核对来源申请仍为已批准、申请人机构/用途/用途版本/有效期与绑定快照一致、授权有效期不超出批准窗口且未过期。任一项漂移即拒绝生效，并提示按当前批准版本重新申请授权。
+- **申请失效联动**：申请 `withdraw`/`reject`/`expire` 时，若存在 `active` 授权则整体拒绝并提示管理员先撤销（申请状态不变）；其余未生效（`issued`）授权由系统自动置为 `voided` 并写入 `invalid_reason` 和级联审计。
+
+## 演示页面
+
+打开根路径可见治理看板：授权卡片展示来源申请、绑定批准版本、状态徽标与失效原因（失效时红色提示），申请卡片展示批准快照、三名委员与修订记录，并提供操作面板和系统级联审计时间线。
+
 ## 主要接口
 
 - `GET /health`：健康检查。
